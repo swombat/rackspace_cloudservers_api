@@ -34,12 +34,10 @@ module Rightscale
       end
     end
 
-    class NoChange < RuntimeError #:nodoc:
-    end
-
-    DEFAULT_AUTH_ENDPOINT = "https://auth.api.rackspacecloud.com"
-
     class Interface
+      DEFAULT_AUTH_ENDPOINT = "https://auth.api.rackspacecloud.com"
+      DEFAULT_LIMIT = 1000
+
       @@rackspace_problems = []
       def self.rackspace_problems
         @@rackspace_problems
@@ -122,8 +120,11 @@ module Rightscale
         # Fix a path
         path = "/#{path}" if !path.empty? && !path[/^\//]
         # Request variables
-        request_params = options[:vars].to_a.map do |k, v|
-          "#{URI.escape(k.to_s)}=#{URI.escape(v.to_s)}"
+        request_params = options[:vars].to_a.map do |key, value|
+          key = key.to_s.downcase
+          # Make sure we do not pass a Time object instead of integer for 'changes-since'
+          value = value.to_i if key == 'changes-since'
+          "#{URI.escape(key)}=#{URI.escape(value.to_s)}"
         end.join('&')
         # Build a request final path
         request_path  = "#{endpoint_data[:service]}#{path}"
@@ -133,8 +134,7 @@ module Rightscale
         request = eval("Net::HTTP::#{verb}").new(request_path)
         request.body = options[:body] if options[:body]
         # Set headers
-        request['Content-Type'] = 'application/json'
-        options[:headers].to_a.each { |item| request[item[0]] = item[1] }
+        options[:headers].to_a.each { |key, value| request[key] = value }
         # prepare output hash
         endpoint_data.merge(:request => request)
       end
@@ -160,7 +160,7 @@ module Rightscale
           when '203'
             # 203 + an empty response body means we asked whether the valud did not change and it hit
             if @last_response.body.blank?
-              path = simple_path(@last_request.path)
+              path = cached_path(@last_request.path)
               last_modified_at = @cache[path][:last_modified_at]
               raise NoChange.new("Cached: '#{path}' has not changed since #{last_modified_at}.")
             end
@@ -193,13 +193,17 @@ module Rightscale
         raise
       end
 
-      # Remove '/v1.0/123456' from a path value
-      #  simple_path('/v1.0/123456/images/detail') #=> '/images/detail'
+      #  simple_path('/v1.0/123456/images/detail?var1=var2') #=> '/images/detail?var1=var2'
       def simple_path(path) # :nodoc:
-        (path[/^(#{@service_endpoint_data[:service]})(.*)/] && $2) || path
+        (path[/^#{@service_endpoint_data[:service]}(.*)/] && $1) || path
       end
 
-      # Add trailing '/detail' item to a path if options has :detail key set
+      #  simple_path('/v1.0/123456/images/detail?var1=var2') #=> '/images/detail'
+      def cached_path(path) # :nodoc:
+        simple_path(path)[/([^?]*)/] && $1
+      end
+
+      #  detailed_path('/images', true) #=> '/images/detail'
       def detailed_path(path, options) # :nodoc:
         "#{path}#{options[:detail] ? '/detail' : ''}"
       end
@@ -238,6 +242,32 @@ module Rightscale
         @logged_in = true
       end
 
+      # Incrementally lists something.
+      def incrementally_list_resources(verb, path, offset=nil, limit=nil, opts={}, &block) # :nodoc:
+        opts = opts.dup
+        opts[:vars] ||= {}
+        opts[:vars]['offset'] = offset || 0
+        opts[:vars]['limit']  = limit  || DEFAULT_LIMIT
+#        full_path = detailed_path(path, opts)
+        # Get a resource name:
+        #   '/images'         => 'images'
+        #   '/servers/detail' => 'servers'
+        resources = path[%r{^/([^/]*)}] && $1
+        result    = { resources => []}
+        loop do
+          begin
+            response = api(verb, path, opts)
+            result[resources] += response[resources]
+          rescue Rightscale::Rackspace::Error => e
+            raise e unless e.message[/itemNotFound/]
+            response = nil
+          end
+          break if response.blank? || response[resources].blank? || (block && !block.call(response))
+          opts[:vars]['offset'] += opts[:vars]['limit']
+        end
+        result
+      end
+
       # Call Rackspace. Caching is not used.
       def api(verb, path='', options={}) # :nodoc:
         login unless @logged_in
@@ -247,24 +277,34 @@ module Rightscale
       end
 
       # Call Rackspace. Use cache if possible
+      # opts:
+      #  :incrementally - use incrementally list to get the whole list of items
+      #  otherwise it will get max DEFAULT_LIMIT items (PS API call must support pagination)
+      #
       def api_or_cache(verb, path, options={})
-        use_caching  = params[:caching] && !path[/\?/]
+        use_caching  = params[:caching] && options[:vars].blank?
         cache_record = use_caching && cached?(path)
-        #
+        # Create a proc object to avoid a code duplication
+        proc = Proc.new do
+          if options[:incrementally]
+               incrementally_list_resources(verb, path, nil, nil, options)
+          else api(verb, path, options)
+          end
+        end
+        # The cache is not used or record is not found
         unless cache_record
-          # The cache is not used or record is not found
-          response = api(verb, path, options)
+          response = proc.call
           if use_caching
             last_modified_at = @last_response.to_hash['last-modified'].first
             update_cache(path, last_modified_at, response)
           end
           response
         else
-          # Record found - ask Rackspace if it changed or not since last update
+          # Record found - ask Rackspace whether it changed or not since last update
           options = options.dup
           options[:headers] ||= {}
           options[:headers]['if-modified-since'] = cache_record[:last_modified_at]
-          response = api(verb, path, options)
+          proc.call
         end
       end
 
@@ -288,12 +328,19 @@ module Rightscale
     # Error handling
     #------------------------------------------------------------
 
+    class NoChange < RuntimeError #:nodoc:
+    end
+
     class Error < RuntimeError
     end
 
     class HttpErrorHandler
 
+      # Receiving these codes we have to reauthenticate at Rackspace
       REAUTHENTICATE_ON = ['401']
+      # Some error are too ennoing to be logged: '404' comes very often when one calls
+      # incrementally_list_something
+      SKIP_LOGGING_ON   = ['404']
 
       @@reiteration_start_delay = 0.2
       def self.reiteration_start_delay
@@ -346,10 +393,12 @@ module Rightscale
         error_found = false
         response    = @handle.last_response
         error_message = HttpErrorHandler::extract_error_description(response, @handle.params[:verbose_errors])
-        # log the error
+        # Log the error
         logger = @handle.logger
-        logger.warn("##### #{@handle.class.name} returned an error: #{error_message} #####")
-        logger.warn("##### #{@handle.class.name} request: #{request[:server]}:#{request[:port]}#{request[:request].path} ####")
+        unless SKIP_LOGGING_ON.include?(response.code)
+          logger.warn("##### #{@handle.class.name} returned an error: #{error_message} #####")
+          logger.warn("##### #{@handle.class.name} request: #{request[:server]}:#{request[:port]}#{request[:request].path} ####")
+        end
         # Get the error description of it is provided
         @handle.last_error = error_message
         # now - check the error
@@ -380,13 +429,12 @@ module Rightscale
                 logger.warn("Retry may fail due to unable to reset the file pointer -- #{self.class.name} : #{e.inspect}")
               end
             end
-
             # Oops it seems we have been asked about reauthentication..
             if REAUTHENTICATE_ON.include?(@handle.last_response.code)
               @handle.authenticate(:soft)
               @handle.request_info(request)
             end
-
+            # Make another try
             result = @handle.request_info(request)
           else
             logger.warn("##### Ooops, time is over... ####")

@@ -35,7 +35,12 @@ module Rightscale
 
       # List images.
       def list_images(opts={})
-        api_or_cache(:get, detailed_path("/images", opts), opts)
+        api_or_cache(:get, detailed_path("/images", opts), opts.merge(:incrementally => true))
+      end
+
+      # NOT TESTED
+      def incrementally_list_images(offset=nil, limit=nil, opts={}, &block)
+        incrementally_list_resources(:get, detailed_path("/images", opts), offset, limit, opts, &block)
       end
 
       # Get image data.
@@ -55,7 +60,12 @@ module Rightscale
 
       # List flavors.
       def list_flavors(opts={})
-        api_or_cache(:get, detailed_path("/flavors", opts), opts)
+        api_or_cache(:get, detailed_path("/flavors", opts), opts.merge(:incrementally => true))
+      end
+
+      # NOT TESTED
+      def incrementally_list_flavors(offset=nil, limit=nil, opts={}, &block)
+        incrementally_list_resources(:get, detailed_path("/flavors", opts), offset, limit, opts, &block)
       end
 
       # Get flavor data.
@@ -69,7 +79,12 @@ module Rightscale
 
       # List servers.
       def list_servers(opts={})
-        api_or_cache(:get, detailed_path("/servers", opts), opts)
+        api_or_cache(:get, detailed_path("/servers", opts), opts.merge(:incrementally => true))
+      end
+
+      # NOT TESTED
+      def incrementally_list_servers(offset=nil, limit=nil, opts={}, &block)
+        incrementally_list_resources(:get, detailed_path("/servers", opts), offset, limit, opts, &block)
       end
 
       # Launch a new server.
@@ -186,7 +201,12 @@ module Rightscale
 
       # NOT TESTED
       def list_shared_ip_groups(opts={})
-        api_or_cache(:get, detailed_path("/shared_ip_groups", opts), opts)
+        api_or_cache(:get, detailed_path("/shared_ip_groups", opts), opts.merge(:incrementally => true))
+      end
+
+      # NOT TESTED
+      def incrementally_list_groups(offset=nil, limit=nil, opts={}, &block)
+        incrementally_list_resources(:get, detailed_path("/groups", opts), offset, limit, opts, &block)
       end
 
       # NOT TESTED
