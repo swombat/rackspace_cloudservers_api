@@ -24,13 +24,7 @@
 require 'benchmark'
 require 'net/https'
 require 'uri'
-#require 'time'
-#require "cgi"
 require "base64"
-#require "rexml/document"
-#require "openssl"
-#require "digest/sha1"
-
 require 'rubygems'
 require 'json'
 require 'right_http_connection'
