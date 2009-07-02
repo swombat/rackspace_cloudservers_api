@@ -49,14 +49,19 @@ module Rightscale
       def self.bench
         @@bench
       end
+
+      @@params = {}
+      def params
+        @@params
+      end
       
       @@caching = false
 
-      attr_reader   :params
       attr_reader   :username
       attr_reader   :auth_key
       attr_reader   :logged_in
       attr_reader   :auth_headers
+      attr_reader   :auth_token
       attr_reader   :auth_endpoint
       attr_reader   :service_endpoint
       attr_accessor :last_request
@@ -64,6 +69,10 @@ module Rightscale
       attr_accessor :last_error
       attr_reader   :logger
       attr_reader   :cache
+
+      def params
+        @@params.merge(@params)
+      end
 
       def endpoint_to_host_data(endpoint)
         service = URI.parse(endpoint).path
@@ -74,6 +83,10 @@ module Rightscale
           :port     => URI.parse(endpoint).port }
       end
 
+      # Params:
+      #  :logger,
+      #  :caching - bool
+      #  :verbose_errors - bool
       def initialize(username, auth_key, params={})
         @params = params
         # Auth data
@@ -111,7 +124,7 @@ module Rightscale
         # Request variables
         request_params = options[:vars].to_a.map do |k, v|
           "#{URI.escape(k.to_s)}=#{URI.escape(v.to_s)}"
-        end.join(',')
+        end.join('&')
         # Build a request final path
         request_path  = "#{endpoint_data[:service]}#{path}"
         request_path  = '/' if request_path.blank?
@@ -120,6 +133,7 @@ module Rightscale
         request = eval("Net::HTTP::#{verb}").new(request_path)
         request.body = options[:body] if options[:body]
         # Set headers
+        request['Content-Type'] = 'application/json'
         options[:headers].to_a.each { |item| request[item[0]] = item[1] }
         # prepare output hash
         endpoint_data.merge(:request => request)
@@ -130,7 +144,6 @@ module Rightscale
         result = nil
         @connection  ||= Rightscale::HttpConnection.new(:exception => Error, :logger => @logger)
         @@bench.service.add!{ result = @connection.request(request_hash) }
-pp "---->  #{result.code}"
         result
       end
 
@@ -138,28 +151,43 @@ pp "---->  #{result.code}"
       def request_info(request_hash) #:nodoc:
         @last_request  = request_hash[:request]
         @last_response = internal_request_info(request_hash)
-        json_result    = nil
+        result = nil
         # check response for success...
         if @last_response.is_a?(Net::HTTPSuccess)
+          # SUCCESS
           @error_handler = nil
           case @last_response.code 
           when '203'
-            # 203 + an empty response body means we asked if the valud did not change and it hit
+            # 203 + an empty response body means we asked whether the valud did not change and it hit
             if @last_response.body.blank?
               path = simple_path(@last_request.path)
               last_modified_at = @cache[path][:last_modified_at]
-              raise NoChange.new("Cache hit: '#{path}' has not changed since #{last_modified_at}")
+              raise NoChange.new("Cached: '#{path}' has not changed since #{last_modified_at}.")
             end
           end
-          #
-          @@bench.parser.add!{ json_result = !@last_response.body.blank? ? JSON::parse(@last_response.body) : true }
-          json_result
+          # Parse a response body. If the body is empty the return +true+
+          @@bench.parser.add! do
+            result = if @last_response.body.blank? then true
+                     else
+                       case @last_response['content-type'].first
+                       when 'application/json' then JSON::parse(@last_response.body)
+                       else @last_response.body
+                       end
+                     end
+          end
         else
+          # ERROR
+          case @last_response.code
+          when '304' 
+            @error_handler = nil
+            raise NoChange.new("NotModified: '#{simple_path(@last_request.path)}' has not changed since the requested time.")
+          end
           @error_handler ||= HttpErrorHandler.new(self, :errors_list => self.class.rackspace_problems)
-          json_result      = @error_handler.check(request_hash)
+          result           = @error_handler.check(request_hash)
           @error_handler   = nil
-          raise Error.new(@last_error) if json_result.nil?
+          raise Error.new(@last_error) if result.nil?
         end
+        result
       rescue
         @error_handler = nil
         raise
@@ -176,8 +204,10 @@ pp "---->  #{result.code}"
         "#{path}#{options[:detail] ? '/detail' : ''}"
       end
 
-      # Do authentication.
-      # Params: +soft+ is used for autoauthentication when auth_token expires
+      # Authenticate a user.
+      # Params:  +soft+ is used for auto-authentication when auth_token expires. Soft auth
+      # do not overrides @last_request and @last_response attributes (are needed for a proper
+      # error handling) on success.
       def authenticate(soft=nil) # :nodoc:
         @logged_in    = false
         @auth_headers = {}
@@ -192,7 +222,7 @@ pp "---->  #{result.code}"
             @last_request  = request_data[:request]
             @last_response = response
             @error_handler = nil
-            raise Error.new(HttpErrorHandler::extract_error_description(response))
+            raise Error.new(HttpErrorHandler::extract_error_description(response, params[:verbose_errors]))
           end
         else
           request_info(request_data)
@@ -201,8 +231,9 @@ pp "---->  #{result.code}"
         logger.info ">>>>> Authenticated successfully."
         # Store all auth response headers
         @auth_headers = response.to_hash
+        @auth_token   = @auth_headers['x-auth-token'].first
         # Service endpoint
-        @service_endpoint      = @params[:service_endpoint] || @auth_headers['x-compute-url'].first
+        @service_endpoint      = params[:service_endpoint] || @auth_headers['x-compute-url'].first
         @service_endpoint_data = endpoint_to_host_data(@service_endpoint)
         @logged_in = true
       end
@@ -211,13 +242,13 @@ pp "---->  #{result.code}"
       def api(verb, path='', options={}) # :nodoc:
         login unless @logged_in
         options[:headers] ||= {}
-        options[:headers]['x-auth-token'] = @auth_headers['x-auth-token'].first
+        options[:headers]['x-auth-token'] = @auth_token
         request_info(generate_request(verb, path, options))
       end
 
       # Call Rackspace. Use cache if possible
       def api_or_cache(verb, path, options={})
-        use_caching  = caching? && !path[/\?/]
+        use_caching  = params[:caching] && !path[/\?/]
         cache_record = use_caching && cached?(path)
         #
         unless cache_record
@@ -241,10 +272,6 @@ pp "---->  #{result.code}"
       # Caching
       #------------------------------------------------------------
 
-      def caching?
-        @params.key?(:caching) ? @params[:caching] : @@caching
-      end
-
       def cached?(path)
         @cache[path]
       end
@@ -266,7 +293,7 @@ pp "---->  #{result.code}"
 
     class HttpErrorHandler
 
-      REAUTHENTICATE_ON = ['400','401']
+      REAUTHENTICATE_ON = ['401']
 
       @@reiteration_start_delay = 0.2
       def self.reiteration_start_delay
@@ -284,10 +311,19 @@ pp "---->  #{result.code}"
       end
 
       # Format a response error message.
-      def self.extract_error_description(response) #:nodoc:
+      def self.extract_error_description(response, verbose=false) #:nodoc:
         message = nil
         Interface::bench.parser.add! do
-          message = (JSON::parse(response.body).to_a.map{|k,v| "#{k}: #{v['message']}"}.join("\n") rescue response.message)
+          message = begin
+                      if response.body[/^<!DOCTYPE HTML PUBLIC/] then response.message
+                      else
+                        JSON::parse(response.body).to_a.map do |k,v|
+                          "#{k}: #{v['message']}" + (verbose ? "\n#{v['details']}" : "")
+                        end.join("\n")
+                      end
+                    rescue
+                      response.message
+                    end
         end
         "#{response.code}: #{message}"
       end
@@ -309,7 +345,7 @@ pp "---->  #{result.code}"
         result      = nil
         error_found = false
         response    = @handle.last_response
-        error_message = HttpErrorHandler::extract_error_description(response)
+        error_message = HttpErrorHandler::extract_error_description(response, @handle.params[:verbose_errors])
         # log the error
         logger = @handle.logger
         logger.warn("##### #{@handle.class.name} returned an error: #{error_message} #####")

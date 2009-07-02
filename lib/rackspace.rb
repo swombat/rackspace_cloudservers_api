@@ -61,12 +61,42 @@ module Rightscale
         api_or_cache(:get, detailed_path("/servers", opts), opts)
       end
 
+      # Launch a new server.
+      #  +Server_data+ is a hash of params params:
+      #   Mandatory: :name, :image, :flavor
+      #   Optional:  :password, :metadata, :files
+      def create_server(server_data, opts={} )
+        personality = server_data[:files].to_a.dup
+        personality.map! { |file, contents| { 'path'=> file, 'contents' => Base64.encode64(contents).chomp } }
+        body = {
+          'server' => {
+            'name'     => server_data[:name],
+            'imageId'  => server_data[:image],
+            'flavorId' => server_data[:flavor]
+          }
+        }
+        body['server']['adminPass']   = server_data[:password] unless server_data[:password].blank?
+        body['server']['metadata']    = server_data[:metadata] unless server_data[:metadata].blank?
+        body['server']['personality'] = personality            unless personality.blank?
+        api(:post, "/servers", opts.merge(:body => body.to_json))
+      end
+
+      def get_server(id, opts={})
+        api(:get, "/servers/#{id}", opts)
+      end
+
+      # Delete a server.
+      # Returns +true+ on success.
+      def delete_server(id, opts={})
+        api(:delete, "/servers/#{id}", opts)
+      end
+
       #--------------------------------
       # Shared IP Groups
       #--------------------------------
 
       def list_shared_ip_groups(opts={})
-        api_or_cache(:get, detailed_path("/list_shared_ip_groupsss", opts), opts)
+        api_or_cache(:get, detailed_path("/list_shared_ip_groups", opts), opts)
       end
 
     end

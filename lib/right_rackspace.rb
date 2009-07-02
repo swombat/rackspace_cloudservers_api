@@ -26,10 +26,10 @@ require 'net/https'
 require 'uri'
 #require 'time'
 #require "cgi"
-#require "base64"
+require "base64"
 #require "rexml/document"
-require "openssl"
-require "digest/sha1"
+#require "openssl"
+#require "digest/sha1"
 
 require 'rubygems'
 require 'json'
