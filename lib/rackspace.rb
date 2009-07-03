@@ -25,8 +25,44 @@ module Rightscale
   module Rackspace
     class Interface
 
-      def login
-        authenticate
+      # The login is executed automatically when one calls any othe API call.
+      # The only use case  for this method is when one need to pass any custom
+      # headers or vars during a login process.
+      #
+      #  rackspace.login #=> true
+      #
+      def login(opts={})
+        authenticate(nil, opts)
+      end
+
+      def get_api_version(opts={})
+        api(:get, "/limits",  opts.merge(:no_service_path => true))
+      end
+
+      # Determine rate limits.
+      # 
+      #  rackspace.list_limits #=> 
+      #    {"limits"=>
+      #      {"absolute"=>
+      #        {"maxNumServers"=>25, "maxIPGroups"=>50, "maxIPGroupMembers"=>25},
+      #       "rate"=>
+      #        [{"regex"=>".*",
+      #          "verb"=>"PUT",
+      #          "URI"=>"*",
+      #          "remaining"=>10,
+      #          "unit"=>"MINUTE",
+      #          "value"=>10,
+      #          "resetTime"=>1246604596},
+      #         {"regex"=>"^/servers",
+      #          "verb"=>"POST",
+      #          "URI"=>"/servers*",
+      #          "remaining"=>1000,
+      #          "unit"=>"DAY",
+      #          "value"=>1000,
+      #          "resetTime"=>1246604596}, ...]}}
+      #
+      def list_limits(opts={})
+        api(:get, "/limits",  opts)
       end
 
       #--------------------------------
@@ -205,8 +241,8 @@ module Rightscale
       end
 
       # NOT TESTED
-      def incrementally_list_groups(offset=nil, limit=nil, opts={}, &block)
-        incrementally_list_resources(:get, detailed_path("/groups", opts), offset, limit, opts, &block)
+      def incrementally_list_shared_ip_groups(offset=nil, limit=nil, opts={}, &block)
+        incrementally_list_resources(:get, detailed_path("/shared_ip_groups", opts), offset, limit, opts, &block)
       end
 
       # NOT TESTED

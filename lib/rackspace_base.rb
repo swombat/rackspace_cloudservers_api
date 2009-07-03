@@ -105,36 +105,39 @@ module Rightscale
       end
 
       #
-      # options:
-      #   :body           => String
-      #   :headers        => Hash|Array
-      #   :endpoint_data  => Hash
-      #   :vars           => hash
+      # opts:
+      #   :body            => String
+      #   :headers         => Hash|Array
+      #   :endpoint_data   => Hash
+      #   :vars            => hash
+      #   :no_service_path => bool
       #
-      def generate_request(verb, path='', options={}) #:nodoc:
+      def generate_request(verb, path='', opts={}) #:nodoc:
         # Form a valid http verb: 'Get', 'Post', 'Put', 'Delete'
         verb = verb.to_s.capitalize
         raise "Unsupported HTTP verb #{verb.inspect}!" unless verb[/^(Get|Post|Put|Delete)$/]
         # Select an endpoint
-        endpoint_data = (options[:endpoint_data] || @service_endpoint_data).dup
+        endpoint_data = (opts[:endpoint_data] || @service_endpoint_data).dup
         # Fix a path
-        path = "/#{path}" if !path.empty? && !path[/^\//]
+        path = "/#{path}" if !path.blank? && !path[/^\//]
         # Request variables
-        request_params = options[:vars].to_a.map do |key, value|
+        request_params = opts[:vars].to_a.map do |key, value|
           key = key.to_s.downcase
           # Make sure we do not pass a Time object instead of integer for 'changes-since'
           value = value.to_i if key == 'changes-since'
           "#{URI.escape(key)}=#{URI.escape(value.to_s)}"
         end.join('&')
         # Build a request final path
-        request_path  = "#{endpoint_data[:service]}#{path}"
+pp opts
+        service = opts[:no_service_path] ? '' : endpoint_data[:service]
+        request_path  = "#{service}#{path}"
         request_path  = '/' if request_path.blank?
         request_path += "?#{request_params}" unless request_params.blank?
         # Create a request
         request = eval("Net::HTTP::#{verb}").new(request_path)
-        request.body = options[:body] if options[:body]
+        request.body = opts[:body] if opts[:body]
         # Set headers
-        options[:headers].to_a.each { |key, value| request[key] = value }
+        opts[:headers].to_a.each { |key, value| request[key] = value }
         # prepare output hash
         endpoint_data.merge(:request => request)
       end
@@ -212,13 +215,13 @@ module Rightscale
       # Params:  +soft+ is used for auto-authentication when auth_token expires. Soft auth
       # do not overrides @last_request and @last_response attributes (are needed for a proper
       # error handling) on success.
-      def authenticate(soft=nil) # :nodoc:
+      def authenticate(soft=nil, opts={}) # :nodoc:
         @logged_in    = false
         @auth_headers = {}
-        request_data  = generate_request( :get, '',
-                                          :endpoint_data  => @auth_endpoint_data,
-                                          :headers        => { 'x-auth-user' => @username,
-                                                               'x-auth-key'  => @auth_key } )
+        opts = opts.dup
+        opts[:endpoint_data]  = @auth_endpoint_data,
+        (opts[:headers] ||= {}).merge!({ 'x-auth-user' => @username, 'x-auth-key'  => @auth_key })
+        request_data  = generate_request( :get, '', opts )
         logger.info ">>>>> Authenticating ..."
         if soft
           response = internal_request_info(request_data)
@@ -248,7 +251,6 @@ module Rightscale
         opts[:vars] ||= {}
         opts[:vars]['offset'] = offset || 0
         opts[:vars]['limit']  = limit  || DEFAULT_LIMIT
-#        full_path = detailed_path(path, opts)
         # Get a resource name:
         #   '/images'         => 'images'
         #   '/servers/detail' => 'servers'
@@ -281,7 +283,7 @@ module Rightscale
       #  :incrementally - use incrementally list to get the whole list of items
       #  otherwise it will get max DEFAULT_LIMIT items (PS API call must support pagination)
       #
-      def api_or_cache(verb, path, options={})
+      def api_or_cache(verb, path, options={}) # :nodoc:
         use_caching  = params[:caching] && options[:vars].blank?
         cache_record = use_caching && cached?(path)
         # Create a proc object to avoid a code duplication
