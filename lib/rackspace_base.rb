@@ -128,7 +128,6 @@ module Rightscale
           "#{URI.escape(key)}=#{URI.escape(value.to_s)}"
         end.join('&')
         # Build a request final path
-pp opts
         service = opts[:no_service_path] ? '' : endpoint_data[:service]
         request_path  = "#{service}#{path}"
         request_path  = '/' if request_path.blank?
@@ -219,7 +218,7 @@ pp opts
         @logged_in    = false
         @auth_headers = {}
         opts = opts.dup
-        opts[:endpoint_data]  = @auth_endpoint_data,
+        opts[:endpoint_data] = @auth_endpoint_data
         (opts[:headers] ||= {}).merge!({ 'x-auth-user' => @username, 'x-auth-key'  => @auth_key })
         request_data  = generate_request( :get, '', opts )
         logger.info ">>>>> Authenticating ..."
@@ -251,20 +250,26 @@ pp opts
         opts[:vars] ||= {}
         opts[:vars]['offset'] = offset || 0
         opts[:vars]['limit']  = limit  || DEFAULT_LIMIT
-        # Get a resource name:
-        #   '/images'         => 'images'
-        #   '/servers/detail' => 'servers'
-        resources = path[%r{^/([^/]*)}] && $1
-        result    = { resources => []}
+        # Get a resource name by path:
+        #   '/images'           => 'images'
+        #   '/servers/detail'   => 'servers'
+        #   '/shared_ip_groups' => 'sharedIpGroups'
+        resource_name = ''
+        (path[%r{^/([^/]*)}] && $1).split('_').each_with_index do |w, i|
+          resource_name += (i==0 ? w.downcase : w.capitalize)
+        end
+        result = { resource_name => []}
         loop do
           begin
             response = api(verb, path, opts)
-            result[resources] += response[resources]
+            result[resource_name] += response[resource_name]
           rescue Rightscale::Rackspace::Error => e
             raise e unless e.message[/itemNotFound/]
             response = nil
           end
-          break if response.blank? || response[resources].blank? || (block && !block.call(response))
+          break if  response.blank? ||
+                   (response[resource_name].size < opts[:vars]['limit']) ||
+                   (block && !block.call(response))
           opts[:vars]['offset'] += opts[:vars]['limit']
         end
         result

@@ -35,8 +35,14 @@ module Rightscale
         authenticate(nil, opts)
       end
 
-      def get_api_version(opts={})
-        api(:get, "/limits",  opts.merge(:no_service_path => true))
+      # List all API versions supported by a Service Endpoint.
+      #
+      #  rackspace.list_api_versions #=> {"versions"=>[{"id"=>"v1.0", "status"=>"BETA"}]}
+      #
+      # Caching: yes, key: '/'
+      #
+      def list_api_versions(opts={})
+        api_or_cache(:get, "/",  opts.merge(:no_service_path => true))
       end
 
       # Determine rate limits.
@@ -61,8 +67,10 @@ module Rightscale
       #          "value"=>1000,
       #          "resetTime"=>1246604596}, ...]}}
       #
+      # Caching: yes, key: '/limits'
+      #
       def list_limits(opts={})
-        api(:get, "/limits",  opts)
+        api_or_cache(:get, "/limits",  opts)
       end
 
       #--------------------------------
@@ -70,16 +78,51 @@ module Rightscale
       #--------------------------------
 
       # List images.
+      #
+      #  # Get images list.
+      #  rackspace.list_images #=>
+      #    {"images"=>
+      #      [{"name"=>"CentOS 5.2", "id"=>2},
+      #       {"name"=>"Gentoo 2008.0", "id"=>3},
+      #       {"name"=>"Debian 5.0 (lenny)", "id"=>4},
+      #        ...}]}
+      #
+      #  # Get the detailed images description.
+      #  rackspace.list_images(:detail => true) #=>
+      #    {"images"=>
+      #      [{"name"=>"CentOS 5.2", "id"=>2, "status"=>"ACTIVE"},
+      #       {"name"=>"Gentoo 2008.0", "id"=>3, "status"=>"ACTIVE"},
+      #       {"name"=>"Debian 5.0 (lenny)", "id"=>4, "status"=>"ACTIVE"},
+      #       ...}]}
+      #
+      #  # Get the most recent changes or Rightscale::Rackspace::NoChange.
+      #  # (no RightRackspace gem caching)
+      #  rackspace.list_images(:detail => true, :vars => {'changes-since' => Time.now-3600}) #=>
+      #    {"images"=>
+      #      [{"name"=>"CentOS 5.2", "id"=>2, "status"=>"ACTIVE"},
+      #       {"name"=>"Gentoo 2008.0", "id"=>3, "status"=>"ACTIVE"},
+      #       {"name"=>"Debian 5.0 (lenny)", "id"=>4, "status"=>"ACTIVE"},
+      #       ...}]}
+      #
+      # RightRackspace caching: yes, keys: '/images', '/images/detail'
+      #
       def list_images(opts={})
         api_or_cache(:get, detailed_path("/images", opts), opts.merge(:incrementally => true))
       end
 
-      # NOT TESTED
+      # Incrementally list images.
+      #
+      #  # list images by 3
+      #  rackspace.incrementally_list_images(0, 3, :detail=>true) do |response|
+      #    puts response.inspect
+      #    true
+      #  end
+      #
       def incrementally_list_images(offset=nil, limit=nil, opts={}, &block)
         incrementally_list_resources(:get, detailed_path("/images", opts), offset, limit, opts, &block)
       end
 
-      # Get image data.
+      # NOT TESTED
       def get_image(image_id, opts={})
         api(:get, "/images/#{image_id}", opts)
       end
@@ -95,16 +138,49 @@ module Rightscale
       #--------------------------------
 
       # List flavors.
+      #
+      #  # Get list of flavors.
+      #  rackspace.list_flavors #=>
+      #    {"flavors"=>
+      #      [{"name"=>"256 slice", "id"=>1},
+      #       {"name"=>"512 slice", "id"=>2},
+      #       {"name"=>"1GB slice", "id"=>3},
+      #       ...}]}
+      #
+      #  # Get the detailed flavors description.
+      #  rackspace.list_flavors(:detail => true) #=>
+      #    {"flavors"=>
+      #      [{"name"=>"256 slice", "id"=>1, "ram"=>256, "disk"=>10},
+      #       {"name"=>"512 slice", "id"=>2, "ram"=>512, "disk"=>20},
+      #       {"name"=>"1GB slice", "id"=>3, "ram"=>1024, "disk"=>40},
+      #       ...}]}
+      #
+      #  # Get the most recent changes or Rightscale::Rackspace::NoChange.
+      #  # (no RightRackspace gem caching)
+      #  rackspace.list_flavors(:detail => true, :vars => {'changes-since'=>Time.now-3600}) #=>
+      #
+      # RightRackspace caching: yes, keys: '/flavors', '/flavors/detail'
+      #
       def list_flavors(opts={})
         api_or_cache(:get, detailed_path("/flavors", opts), opts.merge(:incrementally => true))
       end
 
-      # NOT TESTED
+      # Incrementally list flavors.
+      #
+      #  rackspace.incrementally_list_flavors(0,3) do |response|
+      #    puts response.inspect
+      #    true
+      #  end
+      #
       def incrementally_list_flavors(offset=nil, limit=nil, opts={}, &block)
         incrementally_list_resources(:get, detailed_path("/flavors", opts), offset, limit, opts, &block)
       end
 
       # Get flavor data.
+      #
+      #  rackspace.get_flavor(5) #=>
+      #    {"flavor"=>{"name"=>"4GB slice", "id"=>5, "ram"=>4096, "disk"=>160}}
+      #
       def get_flavor(flavor_id, opts={})
         api(:get, "/flavors/#{flavor_id}", opts)
       end
@@ -235,7 +311,10 @@ module Rightscale
       # Shared IP Groups
       #--------------------------------
 
-      # NOT TESTED
+      # List shared IP groups.
+      #
+      # RightRackspace caching: yes, keys: '/shared_ip_groups', '/shared_ip_groups/detail'
+      #
       def list_shared_ip_groups(opts={})
         api_or_cache(:get, detailed_path("/shared_ip_groups", opts), opts.merge(:incrementally => true))
       end
