@@ -39,6 +39,8 @@ module Rightscale
       DEFAULT_LIMIT = 1000
 
       @@rackspace_problems = []
+      # A Regexps of errors say the Rackspace has issues and
+      # a request is likely to be repeated
       def self.rackspace_problems
         @@rackspace_problems
       end
@@ -50,7 +52,7 @@ module Rightscale
 
       @@params = {}
       def params
-        @@params
+        @@params.merge(@params)
       end
       
       @@caching = false
@@ -68,11 +70,8 @@ module Rightscale
       attr_reader   :logger
       attr_reader   :cache
 
-      def params
-        @@params.merge(@params)
-      end
-
-      def endpoint_to_host_data(endpoint)
+      # Parses an endpoint and returns a hash of data
+      def endpoint_to_host_data(endpoint)# :nodoc:
         service = URI.parse(endpoint).path
         service.chop! if service[/\/$/]  # remove a trailing '/'
         { :server   => URI.parse(endpoint).host,
@@ -81,10 +80,23 @@ module Rightscale
           :port     => URI.parse(endpoint).port }
       end
 
+      # Create new Rackspace interface handle.
+      # 
       # Params:
-      #  :logger,
-      #  :caching - bool
-      #  :verbose_errors - bool
+      #  :logger            - a logger object
+      #  :caching           - enabled/disables RightRackspace caching on level (only for list_xxx calls)
+      #  :verbose_errors    - verbose error messages
+      #  :auth_endpoint     - an auth endpoint URL ()
+      #  :service_endpoint  - a service endpoint URL
+      #  callbacks:
+      #  :on_request(self, request_hash) - every time before the request
+      #  :on_response(self)              - every time the response comes
+      #  :on_error(self)                 - every time the response is not 2xx | 304
+      #  :on_success(self)               - once after the successfull response
+      #  :on_login(self)                 - before login
+      #  :on_login_success(self)         - when login is successfull
+      #  :on_login_failure(self)         - when login fails
+      #  :on_failure(self)               - once after the unsuccessfull response
       def initialize(username, auth_key, params={})
         @params = params
         # Auth data
@@ -104,13 +116,14 @@ module Rightscale
         @cache = {}
       end
 
-      #
+      # Generate a request.
+      # 
       # opts:
-      #   :body            => String
-      #   :headers         => Hash|Array
-      #   :endpoint_data   => Hash
-      #   :vars            => hash
-      #   :no_service_path => bool
+      #  :body            - String
+      #  :endpoint_data   - Hash
+      #  :no_service_path - bool
+      #  :headers           - a hash or an array of HTTP headers
+      #  :vars              - a hash or an array of URL variables
       #
       def generate_request(verb, path='', opts={}) #:nodoc:
         # Form a valid http verb: 'Get', 'Post', 'Put', 'Delete'
@@ -136,36 +149,39 @@ module Rightscale
         request = eval("Net::HTTP::#{verb}").new(request_path)
         request.body = opts[:body] if opts[:body]
         # Set headers
-        opts[:headers].to_a.each { |key, value| request[key] = value }
+        opts[:headers].to_a.each { |key, value| request[key.to_s.downcase] = value.to_s }
+        request['content-type'] ||= 'application/json'
         # prepare output hash
         endpoint_data.merge(:request => request)
       end
 
       # Just requests a remote end
       def internal_request_info(request_hash) #:nodoc:
-        result = nil
+        on_event(:on_request, request_hash)
         @connection  ||= Rightscale::HttpConnection.new(:exception => Error, :logger => @logger)
-        @@bench.service.add!{ result = @connection.request(request_hash) }
-        result
+        @last_request  = request_hash[:request]
+        @@bench.service.add!{ @last_response = @connection.request(request_hash) }
+        on_event(:on_response)
       end
 
       # Request a remote end and process any errors is found
       def request_info(request_hash) #:nodoc:
-        @last_request  = request_hash[:request]
-        @last_response = internal_request_info(request_hash)
+        internal_request_info(request_hash)
         result = nil
         # check response for success...
-        if @last_response.is_a?(Net::HTTPSuccess)
-          # SUCCESS
+        case @last_response.code
+        when '304'    # Cache hit: NotModified
           @error_handler = nil
-          case @last_response.code 
-          when '203'
-            # 203 + an empty response body means we asked whether the valud did not change and it hit
-            if @last_response.body.blank?
-              path = cached_path(@last_request.path)
-              last_modified_at = @cache[path][:last_modified_at]
-              raise NoChange.new("Cached: '#{path}' has not changed since #{last_modified_at}.")
-            end
+          on_event(:on_success)
+          raise NoChange.new("NotModified: '#{simple_path(@last_request.path)}' has not changed since the requested time.")
+        when /^2../   # SUCCESS
+          @error_handler = nil
+          on_event(:on_success)
+          # Cache hit: Cached
+          if @last_response.code == '203' && @last_response.body.blank?
+            # 203 + an empty response body means we asked whether the value did not change and it hit
+            path = cached_path(@last_request.path)
+            raise NoChange.new("Cached: '#{path}' has not changed since #{@cache[path][:last_modified_at]}.")
           end
           # Parse a response body. If the body is empty the return +true+
           @@bench.parser.add! do
@@ -177,16 +193,13 @@ module Rightscale
                        end
                      end
           end
-        else
-          # ERROR
-          case @last_response.code
-          when '304' 
-            @error_handler = nil
-            raise NoChange.new("NotModified: '#{simple_path(@last_request.path)}' has not changed since the requested time.")
-          end
+        else          # ERROR
+          on_event(:on_error)
           @error_handler ||= HttpErrorHandler.new(self, :errors_list => self.class.rackspace_problems)
           result           = @error_handler.check(request_hash)
           @error_handler   = nil
+          on_event(:on_login_failure) unless @logged_in
+          on_event(:on_failure)
           raise Error.new(@last_error) if result.nil?
         end
         result
@@ -221,22 +234,24 @@ module Rightscale
         opts[:endpoint_data] = @auth_endpoint_data
         (opts[:headers] ||= {}).merge!({ 'x-auth-user' => @username, 'x-auth-key'  => @auth_key })
         request_data  = generate_request( :get, '', opts )
-        logger.info ">>>>> Authenticating ..."
+#        logger.info ">>>>> Authenticating ..."
+        on_event(:on_login)
         if soft
-          response = internal_request_info(request_data)
+          internal_request_info(request_data)
           unless response.is_a?(Net::HTTPSuccess)
-            @last_request  = request_data[:request]
-            @last_response = response
             @error_handler = nil
-            raise Error.new(HttpErrorHandler::extract_error_description(response, params[:verbose_errors]))
+            on_event(:on_error)
+            on_event(:on_login_failure)
+            on_event(:on_failure)
+            raise Error.new(HttpErrorHandler::extract_error_description(@last_response, params[:verbose_errors]))
           end
         else
           request_info(request_data)
-          response = @last_response
         end
-        logger.info ">>>>> Authenticated successfully."
+        on_event(:on_login_success)
+#        logger.info ">>>>> Authenticated successfully."
         # Store all auth response headers
-        @auth_headers = response.to_hash
+        @auth_headers = @last_response.to_hash
         @auth_token   = @auth_headers['x-auth-token'].first
         # Service endpoint
         @service_endpoint      = params[:service_endpoint] || @auth_headers['x-compute-url'].first
@@ -251,9 +266,8 @@ module Rightscale
         opts[:vars]['offset'] = offset || 0
         opts[:vars]['limit']  = limit  || DEFAULT_LIMIT
         # Get a resource name by path:
-        #   '/images'           => 'images'
-        #   '/servers/detail'   => 'servers'
-        #   '/shared_ip_groups' => 'sharedIpGroups'
+        #   '/images'                  => 'images'
+        #   '/shared_ip_groups/detail' => 'sharedIpGroups'
         resource_name = ''
         (path[%r{^/([^/]*)}] && $1).split('_').each_with_index do |w, i|
           resource_name += (i==0 ? w.downcase : w.capitalize)
@@ -268,8 +282,8 @@ module Rightscale
             response = nil
           end
           break if  response.blank? ||
-                   (response[resource_name].size < opts[:vars]['limit']) ||
-                   (block && !block.call(response))
+                   (block && !block.call(response)) ||
+                   (response[resource_name].size < opts[:vars]['limit'])
           opts[:vars]['offset'] += opts[:vars]['limit']
         end
         result
@@ -290,7 +304,7 @@ module Rightscale
       #
       def api_or_cache(verb, path, options={}) # :nodoc:
         use_caching  = params[:caching] && options[:vars].blank?
-        cache_record = use_caching && cached?(path)
+        cache_record = use_caching && @cache[path]
         # Create a proc object to avoid a code duplication
         proc = Proc.new do
           if options[:incrementally]
@@ -315,18 +329,17 @@ module Rightscale
         end
       end
 
-      #------------------------------------------------------------
-      # Caching
-      #------------------------------------------------------------
-
-      def cached?(path)
-        @cache[path]
-      end
-
-      def update_cache(path, last_modified_at, data)
+      def update_cache(path, last_modified_at, data) #:nodoc:
         @cache[path] ||= {}
         @cache[path][:last_modified_at] = last_modified_at
         @cache[path][:data] = data
+      end
+
+      # Events (callbacks) for logging and debugging features.
+      # These callbacks do not catch low level connection errors that are handled by RightHttpConnection but
+      # only HTTP errors.
+      def on_event(event, *params) #:nodoc:
+        self.params[event].call(self, *params) if self.params[event].kind_of?(Proc)
       end
 
     end
@@ -335,13 +348,13 @@ module Rightscale
     # Error handling
     #------------------------------------------------------------
 
-    class NoChange < RuntimeError #:nodoc:
+    class NoChange < RuntimeError
     end
 
     class Error < RuntimeError
     end
 
-    class HttpErrorHandler
+    class HttpErrorHandler # :nodoc:
 
       # Receiving these codes we have to reauthenticate at Rackspace
       REAUTHENTICATE_ON = ['401']
@@ -395,7 +408,7 @@ module Rightscale
       end
 
       # Process errored response
-      def check(request)  #:nodoc:
+      def check(request_hash)  #:nodoc:
         result      = nil
         error_found = false
         response    = @handle.last_response
@@ -404,7 +417,7 @@ module Rightscale
         logger = @handle.logger
         unless SKIP_LOGGING_ON.include?(response.code)
           logger.warn("##### #{@handle.class.name} returned an error: #{error_message} #####")
-          logger.warn("##### #{@handle.class.name} request: #{request[:server]}:#{request[:port]}#{request[:request].path} ####")
+          logger.warn("##### #{@handle.class.name} request: #{request_hash[:server]}:#{request_hash[:port]}#{request_hash[:request].path} ####")
         end
         # Get the error description of it is provided
         @handle.last_error = error_message
@@ -429,9 +442,9 @@ module Rightscale
             @reiteration_delay *= 2
             # Always make sure that the fp is set to point to the beginning(?)
             # of the File/IO. TODO: it assumes that offset is 0, which is bad.
-            if request[:request].body_stream && request[:request].body_stream.respond_to?(:pos)
+            if request_hash[:request].body_stream && request_hash[:request].body_stream.respond_to?(:pos)
               begin
-                request[:request].body_stream.pos = 0
+                request_hash[:request].body_stream.pos = 0
               rescue Exception => e
                 logger.warn("Retry may fail due to unable to reset the file pointer -- #{self.class.name} : #{e.inspect}")
               end
@@ -439,10 +452,10 @@ module Rightscale
             # Oops it seems we have been asked about reauthentication..
             if REAUTHENTICATE_ON.include?(@handle.last_response.code)
               @handle.authenticate(:soft)
-              @handle.request_info(request)
+              @handle.request_info(request_hash)
             end
             # Make another try
-            result = @handle.request_info(request)
+            result = @handle.request_info(request_hash)
           else
             logger.warn("##### Ooops, time is over... ####")
           end

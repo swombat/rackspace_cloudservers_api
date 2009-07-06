@@ -39,7 +39,7 @@ module Rightscale
       #
       #  rackspace.list_api_versions #=> {"versions"=>[{"id"=>"v1.0", "status"=>"BETA"}]}
       #
-      # Caching: yes, key: '/'
+      #  RightRackspace caching: yes, key: '/'
       #
       def list_api_versions(opts={})
         api_or_cache(:get, "/",  opts.merge(:no_service_path => true))
@@ -67,7 +67,7 @@ module Rightscale
       #          "value"=>1000,
       #          "resetTime"=>1246604596}, ...]}}
       #
-      # Caching: yes, key: '/limits'
+      # RightRackspace caching: yes, key: '/limits'
       #
       def list_limits(opts={})
         api_or_cache(:get, "/limits",  opts)
@@ -122,7 +122,11 @@ module Rightscale
         incrementally_list_resources(:get, detailed_path("/images", opts), offset, limit, opts, &block)
       end
 
-      # NOT TESTED
+      # Get image data.
+      #
+      #  rackspace.get_image(5) #=>
+      #    {"image"=>{"name"=>"Fedora 10 (Cambridge)", "id"=>5, "status"=>"ACTIVE"}}
+      #
       def get_image(image_id, opts={})
         api(:get, "/images/#{image_id}", opts)
       end
@@ -202,10 +206,32 @@ module Rightscale
       # Launch a new server.
       #  +Server_data+ is a hash of params params:
       #   Mandatory: :name, :image_id, :flavor_id
-      #   Optional:  :password, :metadata, :files
+      #   Optional:  :password, :metadata, :personalities
+      #
+      #  rackspace.create_server(
+      #    :name      => 'my-awesome-server',
+      #    :image_id  => 8,
+      #    :flavor_id => 4,
+      #    :password  => '123456',
+      #    :metadata  => { 'KD1' => 'XXXX1', 'KD2' => 'XXXX2'},
+      #    :personalities => { '/home/1.txt' => 'woo-hoo',
+      #                        '/home/2.rb'  => 'puts"Olalah!' }) #=>
+      #    {"server"=>
+      #      {"name"=>"my-awesome-server",
+      #       "addresses"=>{"public"=>["174.143.56.6"], "private"=>["10.176.1.235"]},
+      #       "progress"=>0,
+      #       "imageId"=>8,
+      #       "metadata"=>{"KD1"=>"XXXX1", "KD2"=>"XXXX2"},
+      #       "adminPass"=>"my-awesome-server85lzHZ",
+      #       "id"=>2290,
+      #       "flavorId"=>4,
+      #       "hostId"=>"19956ee1c79a57e481b652ddf818a569",
+      #       "status"=>"BUILD"}}
+      #
       # TODO: A password setting does not seem to be working
+      #
       def create_server(server_data, opts={} )
-        personality = server_data[:files].to_a.dup
+        personality = server_data[:personalities].to_a.dup
         personality.map! { |file, contents| { 'path'=> file, 'contents' => Base64.encode64(contents).chomp } }
         body = {
           'server' => {
@@ -221,12 +247,32 @@ module Rightscale
       end
 
       # Get a server data.
+      #  rackspace.get_server(2290)
+      #    {"server"=>
+      #      {"name"=>"my-awesome-server",
+      #       "addresses"=>{"public"=>["174.143.56.6"], "private"=>["10.176.1.235"]},
+      #       "progress"=>100,
+      #       "imageId"=>8,
+      #       "metadata"=>{"KD1"=>"XXXX1", "KD2"=>"XXXX2"},
+      #       "id"=>2290,
+      #       "flavorId"=>4,
+      #       "hostId"=>"19956ee1c79a57e481b652ddf818a569",
+      #       "status"=>"ACTIVE"}}
+      #
       def get_server(server_id, opts={})
         api(:get, "/servers/#{server_id}", opts)
       end
 
       # Change server name and/or password.
-      # NOT TESTED
+      # +Server_data+: :name, :password
+      #
+      #  rackspace.update_server(2290, :password => '12345' ) #=> true
+      #  rackspace.update_server(2290, :name => 'my-super-awesome-server', :password => '67890' ) #=> true
+      #
+      # P.S. the changes will appers in some seconds.
+      # 
+      # P.P.S. changes server status: 'ACTIVE' -> 'PASSWORD'.
+      #
       def update_server(server_id, server_data, opts={})
         body = { 'server' => {} }
         body['server']['name']      = server_data[:name]     if server_data[:name]
@@ -234,7 +280,14 @@ module Rightscale
         api(:put, "/servers/#{server_id}", opts.merge(:body => body.to_json))
       end
 
-      # NOT TESTED
+      # Reboot a server.
+      #
+      #  # Soft reboot
+      #  rackspace.reboot_server(2290) #=> true
+      #
+      #  # Hard reboot (power off)
+      #  rackspace.reboot_server(2290, :hard) #=> true
+      #
       def reboot_server(server_id, type = :soft, opts={})
         body = { 'reboot' => { 'type' => type.to_s.upcase } }
         api(:post, "/servers/#{server_id}/actions/reboot", opts.merge(:body => body.to_json))
@@ -246,23 +299,64 @@ module Rightscale
         api(:post, "/servers/#{server_id}/actions/rebuild", opts.merge(:body => body.to_json))
       end
 
-      # NOT TESTED
+      # Resize a server.
+      #
+      #  rackspace.resize_server(2290, 3) #=> true
+      #  rackspace.get_server(2290) #=>
+      #    {"server"=>
+      #      {"name"=>"my-awesome-server",
+      #       "addresses"=>{"public"=>["174.143.56.6"], "private"=>["10.176.1.235"]},
+      #       "progress"=>0,
+      #       "imageId"=>8,
+      #       "metadata"=>{"KD1"=>"XXXX1", "KD2"=>"XXXX2"},
+      #       "id"=>2290,
+      #       "flavorId"=>4,
+      #       "hostId"=>"19956ee1c79a57e481b652ddf818a569",
+      #       "status"=>"QUEUE_RESIZE"}}
+      #
+      # P.S. changes server status: 'ACTIVE' -> 'QUEUE_RESIZE' -> 'PREP_RESIZE' -> 'RESIZE' -> 'VERIFY_RESIZE'
+      #
       def resize_server(server_id, flavor_id, opts={})
         body = { 'resize' => { 'flavorId' => flavor_id } }
         api(:post, "/servers/#{server_id}/actions/resize", opts.merge(:body => body.to_json))
       end
 
-      # NOT TESTED
+      # Confirm a server resize action.
+      #
+      #  rackspace.confirm_resized_server(2290) #=> true
+      #
+      # P.S. changes server status: 'VERIFY_RESIZE' -> 'ACTIVE'
+      #
       def confirm_resized_server(server_id, opts={})
         api(:put, "/servers/#{server_id}/actions/resize", opts)
       end
 
-      # NOT TESTED
+      # Revert a server resize action.
+      #
+      #  rackspace.revert_resized_server(2290) #=> true
+      #
+      # P.S. changes server status: 'VERIFY_RESIZE' -> 'ACTIVE'
+      #
       def revert_resized_server(server_id, opts={})
         api(:delete, "/servers/#{server_id}/actions/resize", opts)
       end
 
-      # NOT TESTED
+      # Share an IP from an existing server in the specified shared IP group to another
+      # specified server in the same group.
+      #
+      #  rackspace.share_ip_address(2296, 42, "174.143.56.6") #=> true
+      #  rackspace.get_server(2290) #=>
+      #    {"server"=>
+      #      {"name"=>"my-awesome-server",
+      #       "addresses"=>
+      #        {"public"=>["174.143.56.6", "174.143.56.13"], "private"=>["10.176.1.235"]},
+      #       "progress"=>100,
+      #       "imageId"=>8,
+      #       "metadata"=>{"KD1"=>"XXXX1", "KD2"=>"XXXX2"},
+      #       "id"=>2290,
+      #       "flavorId"=>3,
+      #       "hostId"=>"1d5fa1271f57354d9e2861e848568eb3",
+      #       "status"=>"SHARE_IP_NO_CONFIG"}}
       def share_ip_address(server_id, shared_ip_group_id, address, opts={})
         body = { 
           'shareIp' => {
@@ -273,7 +367,10 @@ module Rightscale
         api(:post, "/servers/#{server_id}/actions/share_ip",  opts.merge(:body => body.to_json))
       end
 
-      # NOT TESTED
+      # Remove a shared IP address from the specified server
+      #
+      #  rackspace.unshare_ip_address(2296, "174.143.56.6") #=> true
+      #
       def unshare_ip_address(server_id, address, opts={})
         body = { 'unshareIp' => { 'addr' => address } }
         api(:post, "/servers/#{server_id}/actions/unshare_ip",  opts.merge(:body => body.to_json))
@@ -319,24 +416,42 @@ module Rightscale
         api_or_cache(:get, detailed_path("/shared_ip_groups", opts), opts.merge(:incrementally => true))
       end
 
-      # NOT TESTED
+      # Incrementally list IP groups.
+      #
+      #  # list groups by 5
+      #  rackspace.incrementally_list_shared_ip_groups(0, 5) do |x|
+      #    puts x.inspect
+      #    true
+      #  end
+      #
       def incrementally_list_shared_ip_groups(offset=nil, limit=nil, opts={}, &block)
         incrementally_list_resources(:get, detailed_path("/shared_ip_groups", opts), offset, limit, opts, &block)
       end
 
-      # NOT TESTED
-      def create_shared_ip_groups(name, server_id=nil, opts={})
+      # Create a new shared IP group.
+      #
+      #  rackspace.create_shared_ip_group('my_awesome_group', 2290) #=>
+      #   {"sharedIpGroup"=>{"name"=>"my_awesome_group", "id"=>42}}
+      #
+      def create_shared_ip_group(name, server_id=nil, opts={})
         body = { 'sharedIpGroup' => { 'name' => name } }
         body['sharedIpGroup']['server'] = server_id unless server_id.blank?
         api(:post, "/shared_ip_groups", opts.merge(:body => body.to_json))
       end
 
-      # NOT TESTED
+      # Get shared IP group data.
+      # 
+      #   rackspace.list_shared_ip_groups #=>
+      #    {"sharedIpGroups"=>[{"name"=>"my_awesome_group", "id"=>42, "servers"=>[2290]}]}
+      #
       def get_shared_ip_group(shared_ip_group_id, opts={})
         api(:get, "/shared_ip_groups/#{shared_ip_group_id}", opts)
       end
 
-      # NOT TESTED
+      # Delete an IP group.
+      #
+      #   rackspace.delete_shared_ip_group(42) #=> true
+      #
       def delete_shared_ip_group(shared_ip_group_id, opts={})
         api(:delete, "/shared_ip_groups/#{shared_ip_group_id}", opts)
       end
