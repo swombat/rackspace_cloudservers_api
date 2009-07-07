@@ -51,19 +51,27 @@ module Rightscale
       end
 
       @@params = {}
+      def self.params
+        @@params
+      end
+
       def params
+        @params
+      end
+
+      def merged_params #:nodoc:
         @@params.merge(@params)
       end
       
       @@caching = false
 
-      attr_reader   :username
-      attr_reader   :auth_key
+      attr_accessor :username
+      attr_accessor :auth_key
       attr_reader   :logged_in
       attr_reader   :auth_headers
       attr_reader   :auth_token
-      attr_reader   :auth_endpoint
-      attr_reader   :service_endpoint
+      attr_accessor :auth_endpoint
+      attr_accessor :service_endpoint
       attr_accessor :last_request
       attr_accessor :last_response
       attr_accessor :last_error
@@ -91,17 +99,54 @@ module Rightscale
       #  callbacks:
       #  :on_request(self, request_hash) - every time before the request
       #  :on_response(self)              - every time the response comes
-      #  :on_error(self)                 - every time the response is not 2xx | 304
+      #  :on_error(self, error_message)  - every time the response is not 2xx | 304
       #  :on_success(self)               - once after the successfull response
       #  :on_login(self)                 - before login
       #  :on_login_success(self)         - when login is successfull
       #  :on_login_failure(self)         - when login fails
       #  :on_failure(self)               - once after the unsuccessfull response
+      #
+      # Handle creation:
+      #
+      #  # Just pass your username and youe key
+      #  rackspace = Rightscale::Rackspace::Interface::new('uw1...cct', '99b0...047d')
+      #
+      #  # The username and the key are in ENV vars: RACKSPACE_USERNAME & RACKSPACE_AUTH_KEY
+      #  rackspace = Rightscale::Rackspace::Interface::new
+      #
+      #  # Specify the auth endpoint and the service endpoint explicitly. Make the error
+      #  # messages as verbose as possible.
+      #  rackspace = Rightscale::Rackspace::Interface::new('uw1...cct', '99b0...047d',
+      #    :auth_endpoint  => 'https://api.mosso.com/auth',
+      #    :service_point  => 'https://servers.api.rackspacecloud.com/v1.0/413609',
+      #    :verbose_errors => true )
+      #
+      #  # Fix params after the handle creation:
+      #  rackspace = Rightscale::Rackspace::Interface::new('uw1...cct', '99b0...047d')
+      #  rackspace.params[:verbose_errors] = true
+      #
+      # Calbacks handling:
+      #
+      #  # On response calback
+      #  on_response = Proc.new do |handle|
+      #    puts ">> response headers: #{handle.last_response.to_hash.inspect}"
+      #  end
+      #
+      #  # On error calback
+      #  on_error = Proc.new do |handle, error_message|
+      #    puts ">> Error: #{error_message}"
+      #  end
+      #
+      #  # Create a handle
+      #  rackspace = Rightscale::Rackspace::Interface::new('uw1...cct', '99b0...047d',
+      #    :on_response => on_response,
+      #    :on_error    => on_error)
+      #
       def initialize(username, auth_key, params={})
         @params = params
         # Auth data
-        @username  = username
-        @auth_key  = auth_key
+        @username  = username || ENV['RACKSPACE_USERNAME']
+        @auth_key  = auth_key || ENV['RACKSPACE_AUTH_KEY']
         @logged_in = false
         # Auth host
         @auth_headers  = {} # a set of headers is returned on authentification coplete
@@ -149,7 +194,15 @@ module Rightscale
         request = eval("Net::HTTP::#{verb}").new(request_path)
         request.body = opts[:body] if opts[:body]
         # Set headers
-        opts[:headers].to_a.each { |key, value| request[key.to_s.downcase] = value.to_s }
+        opts[:headers].to_a.each do |key, value|
+          key = key.to_s.downcase
+          # make sure 'if-modified-since' is always httpdated
+          if key == 'if-modified-since'
+            value = Time.at(value)     if value.is_a?(Fixnum)
+            value = value.utc.httpdate if value.is_a?(Time)
+          end
+          request[key] = value.to_s
+        end
         request['content-type'] ||= 'application/json'
         # prepare output hash
         endpoint_data.merge(:request => request)
@@ -194,7 +247,7 @@ module Rightscale
                      end
           end
         else          # ERROR
-          on_event(:on_error)
+          on_event(:on_error, HttpErrorHandler::extract_error_description(@last_response, merged_params[:verbose_errors]))
           @error_handler ||= HttpErrorHandler.new(self, :errors_list => self.class.rackspace_problems)
           result           = @error_handler.check(request_hash)
           @error_handler   = nil
@@ -227,36 +280,31 @@ module Rightscale
       # Params:  +soft+ is used for auto-authentication when auth_token expires. Soft auth
       # do not overrides @last_request and @last_response attributes (are needed for a proper
       # error handling) on success.
-      def authenticate(soft=nil, opts={}) # :nodoc:
+      def authenticate(opts={}) # :nodoc:
         @logged_in    = false
         @auth_headers = {}
         opts = opts.dup
         opts[:endpoint_data] = @auth_endpoint_data
         (opts[:headers] ||= {}).merge!({ 'x-auth-user' => @username, 'x-auth-key'  => @auth_key })
         request_data  = generate_request( :get, '', opts )
-#        logger.info ">>>>> Authenticating ..."
         on_event(:on_login)
-        if soft
-          internal_request_info(request_data)
-          unless response.is_a?(Net::HTTPSuccess)
-            @error_handler = nil
-            on_event(:on_error)
-            on_event(:on_login_failure)
-            on_event(:on_failure)
-            raise Error.new(HttpErrorHandler::extract_error_description(@last_response, params[:verbose_errors]))
-          end
-        else
-          request_info(request_data)
+        internal_request_info(request_data)
+        unless @last_response.is_a?(Net::HTTPSuccess)
+          @error_handler = nil
+          error_message = HttpErrorHandler::extract_error_description(@last_response, merged_params[:verbose_errors])
+          on_event(:on_error, error_message)
+          on_event(:on_login_failure)
+          on_event(:on_failure)
+          raise Error.new(error_message)
         end
-        on_event(:on_login_success)
-#        logger.info ">>>>> Authenticated successfully."
         # Store all auth response headers
         @auth_headers = @last_response.to_hash
         @auth_token   = @auth_headers['x-auth-token'].first
         # Service endpoint
-        @service_endpoint      = params[:service_endpoint] || @auth_headers['x-compute-url'].first
+        @service_endpoint      = merged_params[:service_endpoint] || @auth_headers['x-compute-url'].first
         @service_endpoint_data = endpoint_to_host_data(@service_endpoint)
         @logged_in = true
+        on_event(:on_login_success)
       end
 
       # Incrementally lists something.
@@ -266,8 +314,8 @@ module Rightscale
         opts[:vars]['offset'] = offset || 0
         opts[:vars]['limit']  = limit  || DEFAULT_LIMIT
         # Get a resource name by path:
-        #   '/images'                  => 'images'
-        #   '/shared_ip_groups/detail' => 'sharedIpGroups'
+        #   '/images'                  -> 'images'
+        #   '/shared_ip_groups/detail' -> 'sharedIpGroups'
         resource_name = ''
         (path[%r{^/([^/]*)}] && $1).split('_').each_with_index do |w, i|
           resource_name += (i==0 ? w.downcase : w.capitalize)
@@ -303,7 +351,7 @@ module Rightscale
       #  otherwise it will get max DEFAULT_LIMIT items (PS API call must support pagination)
       #
       def api_or_cache(verb, path, options={}) # :nodoc:
-        use_caching  = params[:caching] && options[:vars].blank?
+        use_caching  = merged_params[:caching] && options[:vars].blank?
         cache_record = use_caching && @cache[path]
         # Create a proc object to avoid a code duplication
         proc = Proc.new do
@@ -339,7 +387,7 @@ module Rightscale
       # These callbacks do not catch low level connection errors that are handled by RightHttpConnection but
       # only HTTP errors.
       def on_event(event, *params) #:nodoc:
-        self.params[event].call(self, *params) if self.params[event].kind_of?(Proc)
+        self.merged_params[event].call(self, *params) if self.merged_params[event].kind_of?(Proc)
       end
 
     end
@@ -412,7 +460,7 @@ module Rightscale
         result      = nil
         error_found = false
         response    = @handle.last_response
-        error_message = HttpErrorHandler::extract_error_description(response, @handle.params[:verbose_errors])
+        error_message = HttpErrorHandler::extract_error_description(response, @handle.merged_params[:verbose_errors])
         # Log the error
         logger = @handle.logger
         unless SKIP_LOGGING_ON.include?(response.code)
@@ -451,7 +499,7 @@ module Rightscale
             end
             # Oops it seems we have been asked about reauthentication..
             if REAUTHENTICATE_ON.include?(@handle.last_response.code)
-              @handle.authenticate(:soft)
+              @handle.authenticate
               @handle.request_info(request_hash)
             end
             # Make another try

@@ -7,3 +7,5 @@ lib/right_rackspace.rb
 lib/rackspace_base.rb
 lib/rackspace.rb
 lib/support.rb
+test/_test_credentials.rb
+test/test_right_rackspace.rb
