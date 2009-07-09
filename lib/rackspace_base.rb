@@ -223,19 +223,27 @@ module Rightscale
         result = nil
         # check response for success...
         case @last_response.code
-        when '304'    # Cache hit: NotModified
+        when /^2..|304/   # SUCCESS
           @error_handler = nil
           on_event(:on_success)
-          raise NoChange.new("NotModified: '#{simple_path(@last_request.path)}' has not changed since the requested time.")
-        when /^2../   # SUCCESS
-          @error_handler = nil
-          on_event(:on_success)
+          
           # Cache hit: Cached
-          if @last_response.code == '203' && @last_response.body.blank?
-            # 203 + an empty response body means we asked whether the value did not change and it hit
-            path = cached_path(@last_request.path)
-            raise NoChange.new("Cached: '#{path}' has not changed since #{@cache[path][:last_modified_at]}.")
+          case @last_response.code
+          when '304'  # 'changes-since' param
+            raise NoChange.new("NotModified: '#{simple_path(@last_request.path)}' has not changed since the requested time.")
+          when '203'  # 'if-modified-since' header
+            # TODO: Mhhh... It seems Rackspace updates 'last-modified' header every 60 seconds or something even if nothing has changed
+            if @last_response.body.blank?
+              cached_path    = cached_path(@last_request.path)
+              last_modified  = @last_response['last-modified'].first
+              message_header = merged_params[:caching] &&
+                               @cache[cached_path] &&
+                               @cache[cached_path][:last_modified_at] == last_modified ? 'Cached' : 'NotModified'
+              # 203 + an empty response body means we asked whether the value did not change and it hit
+              raise NoChange.new("#{message_header}: '#{cached_path}' has not changed since #{last_modified}.")
+            end
           end
+
           # Parse a response body. If the body is empty the return +true+
           @@bench.parser.add! do
             result = if @last_response.body.blank? then true
@@ -280,6 +288,8 @@ module Rightscale
       # Params:  +soft+ is used for auto-authentication when auth_token expires. Soft auth
       # do not overrides @last_request and @last_response attributes (are needed for a proper
       # error handling) on success.
+      #
+      # TODO: make sure 'x-compute-url' header works when Rackspace release the service publicly
       def authenticate(opts={}) # :nodoc:
         @logged_in    = false
         @auth_headers = {}
@@ -322,14 +332,15 @@ module Rightscale
         end
         result = { resource_name => []}
         loop do
-          begin
+#          begin
             response = api(verb, path, opts)
             result[resource_name] += response[resource_name]
-          rescue Rightscale::Rackspace::Error => e
-            raise e unless e.message[/itemNotFound/]
-            response = nil
-          end
+#          rescue Rightscale::Rackspace::Error => e
+#            raise e unless e.message[/itemNotFound/]
+#            response = nil
+#          end
           break if  response.blank? ||
+                   (response[resource_name].blank?) ||
                    (block && !block.call(response)) ||
                    (response[resource_name].size < opts[:vars]['limit'])
           opts[:vars]['offset'] += opts[:vars]['limit']
@@ -408,7 +419,8 @@ module Rightscale
       REAUTHENTICATE_ON = ['401']
       # Some error are too ennoing to be logged: '404' comes very often when one calls
       # incrementally_list_something
-      SKIP_LOGGING_ON   = ['404']
+#      SKIP_LOGGING_ON   = ['404']
+      SKIP_LOGGING_ON   = []
 
       @@reiteration_start_delay = 0.2
       def self.reiteration_start_delay

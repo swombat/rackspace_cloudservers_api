@@ -83,7 +83,7 @@ module Rightscale
     #  begin
     #    new_list = rackspace.list_servers(:detail => true)
     #  rescue Rightscale::Rackspace::NoChange
-    #    puts "Ohoho! We hit internal cache!"
+    #    puts e.message #=> "Cached: '/servers/detail' has not changed since Thu, 09 Jul 2009 10:53:35 GMT."
     #    # extract the list of servers from internal cache
     #    new_list = rackspace.cache['/servers/detail'][:data]
     #    # the lists must be equal
@@ -110,14 +110,25 @@ module Rightscale
     #  last_request_time = Time.now - 3600
     #  begin
     #   rackspace.list_servers(:detail => true, :headers => { 'if-modified-since' => last_request_time })
-    #  rescue Rightscale::Rackspace::NoChange
-    #    puts "Nothing has changed since #{last_request_was_at}"
+    #  rescue Rightscale::Rackspace::NoChange => e
+    #    # e.message can return one of the messages below:
+    #    # - "Cached: '/servers/detail' has not changed since Thu, 09 Jul 2009 10:55:41 GMT."
+    #    # - "NotModified: '/servers/detail' has not changed since Thu, 09 Jul 2009 10:55:41 GMT."
+    #    # The first comes when we have cached response from Rackspace and it can be retreived as
+    #    # rackspace.cache['/servers/detail'][:data]. The second one appears when the local
+    #    # cache has no stored records for the request.
+    #    puts e.message
     #  end
     #
     #  # 'changes-since' URL variable usage:
-    #  new_servers = rackspace.list_servers(:detail => true, :vars => { 'changes-since' => last_request_time })
-    #  # show the changes at servers since last_request_time
-    #  puts new_servers.inspect
+    #  begin
+    #    new_servers = rackspace.list_servers(:detail => true, :vars => { 'changes-since' => last_request_time })
+    #    # show the changes at servers since last_request_time
+    #    puts new_servers.inspect
+    #  rescue Rightscale::Rackspace::NoChange => e
+    #    puts e.message #=>
+    #      "NotModified: '/flavors?changes-since=1247137435&limit=1000&offset=0' has not changed since the requested time."
+    #  end
     #
     # === Callbacks:
     #
@@ -190,7 +201,7 @@ module Rightscale
       # Images
       #--------------------------------
 
-      # List images.
+      # List images. Options: :detail => false|true.
       #
       #  # Get images list.
       #  rackspace.list_images #=>
@@ -303,15 +314,16 @@ module Rightscale
       #
       #
       def create_image(server_id, name, opts={})
-        body = { 'image' => { 'name' => name } }
-        api(:post, "/servers/#{server_id}/actions/create_image",  opts.merge(:body => body.to_json))
+        body = { 'image' => { 'name'     => name,
+                              'serverId' => server_id } }
+        api(:post, "/images",  opts.merge(:body => body.to_json))
       end
 
       #--------------------------------
       # Flavors
       #--------------------------------
 
-      # List flavors.
+      # List flavors. Options: :detail => false|true.
       #
       #  # Get list of flavors.
       #  rackspace.list_flavors #=>
@@ -336,9 +348,7 @@ module Rightscale
       # RightRackspace caching: yes, keys: '/flavors', '/flavors/detail'
       #
       def list_flavors(opts={})
-        # TODO: use incrementally one when Rackspace report they support pagination for list flavors
-#        api_or_cache(:get, detailed_path("/flavors", opts), opts.merge(:incrementally => true))
-        api_or_cache(:get, detailed_path("/flavors", opts), opts)
+        api_or_cache(:get, detailed_path("/flavors", opts), opts.merge(:incrementally => true))
       end
 
       # Incrementally list flavors.
@@ -365,7 +375,7 @@ module Rightscale
       # Servers
       #--------------------------------
 
-      # List servers.
+      # List servers. Options: :detail => false|true.
       #
       #  rackspace.list_servers #=>
       #    {"servers"=>[{"name"=>"my-super-awesome-server-", "id"=>62844}]}
@@ -382,7 +392,7 @@ module Rightscale
       #        "flavorId"=>3,
       #        "hostId"=>"fabfc1cebef6f1d7e4b075138dbd6b46",
       #        "status"=>"ACTIVE"}]
-
+      #
       def list_servers(opts={})
         api_or_cache(:get, detailed_path("/servers", opts), opts.merge(:incrementally => true))
       end
@@ -483,7 +493,7 @@ module Rightscale
       #
       def reboot_server(server_id, type = :soft, opts={})
         body = { 'reboot' => { 'type' => type.to_s.upcase } }
-        api(:post, "/servers/#{server_id}/actions/reboot", opts.merge(:body => body.to_json))
+        api(:post, "/servers/#{server_id}/action", opts.merge(:body => body.to_json))
       end
 
       # The rebuild function removes all data on the server and replaces it with the specified image. 
@@ -507,7 +517,7 @@ module Rightscale
       #
       def rebuild_server(server_id, image_id, opts={})
         body = { 'rebuild' => { 'imageId' => image_id } }
-        api(:post, "/servers/#{server_id}/actions/rebuild", opts.merge(:body => body.to_json))
+        api(:post, "/servers/#{server_id}/action", opts.merge(:body => body.to_json))
       end
 
       # The resize function converts an existing server to a different flavor, in essence, scaling the server up
@@ -530,7 +540,7 @@ module Rightscale
       #
       def resize_server(server_id, flavor_id, opts={})
         body = { 'resize' => { 'flavorId' => flavor_id } }
-        api(:post, "/servers/#{server_id}/actions/resize", opts.merge(:body => body.to_json))
+        api(:post, "/servers/#{server_id}/action", opts.merge(:body => body.to_json))
       end
 
       # Confirm a server resize action.
@@ -538,7 +548,8 @@ module Rightscale
       #  rackspace.confirm_resized_server(2290) #=> true
       #
       def confirm_resized_server(server_id, opts={})
-        api(:put, "/servers/#{server_id}/actions/resize", opts)
+        body = { 'confirmResize' => nil }
+        api(:put, "/servers/#{server_id}/action", opts.merge(:body => body.to_json))
       end
 
       # Revert a server resize action.
@@ -546,7 +557,36 @@ module Rightscale
       #  rackspace.revert_resized_server(2290) #=> true
       #
       def revert_resized_server(server_id, opts={})
-        api(:delete, "/servers/#{server_id}/actions/resize", opts)
+        body = { 'revertResize' => nil }
+        api(:delete, "/servers/#{server_id}/action", opts.merge(:body => body.to_json))
+      end
+
+      #--------------------------------
+      # Server addresses
+      #--------------------------------
+
+      # Get server addresses.
+      # 
+      #  # get all addresses
+      #  rackspace.list_addresses(62844) #=>
+      #    {"addresses"=>{"public"=>["174.143.246.228"], "private"=>["10.176.134.157"]}}
+      #
+      #  # get public addresses
+      #  rackspace.list_addresses(62844, :public) #=>
+      #    {"public"=>["174.143.246.228"]}
+      #
+      #  # get private addresses
+      #  rackspace.list_addresses(62844, :private) #=>
+      #    {"private"=>["10.176.134.157"]}
+      #
+      # RightRackspace caching: no
+      def list_addresses(server_id, address_type=:all, opts={})
+        path = "/servers/#{server_id}/ip"
+        case address_type.to_s
+        when 'public'  then path += "/public"
+        when 'private' then path += "/private"
+        end
+        api(:get, path, opts.merge(:incrementally => true))
       end
 
       # Share an IP from an existing server in the specified shared IP group to another
@@ -567,14 +607,14 @@ module Rightscale
       #       "hostId"=>"1d5fa1271f57354d9e2861e848568eb3",
       #       "status"=>"SHARE_IP_NO_CONFIG"}}
       #
-      def share_ip_address(server_id, shared_ip_group_id, address, opts={})
+      def share_ip_address(server_id, shared_ip_group_id, address, configure_server=true, opts={})
         body = { 
           'shareIp' => {
             'sharedIpGroupId' => shared_ip_group_id,
-            'addr'            => address
+            'configureServer' => configure_server
           }
         }
-        api(:post, "/servers/#{server_id}/actions/share_ip",  opts.merge(:body => body.to_json))
+        api(:put, "/servers/#{server_id}/ip/public/#{address}",  opts.merge(:body => body.to_json))
       end
 
       # Remove a shared IP address from the specified server
@@ -583,7 +623,7 @@ module Rightscale
       #
       def unshare_ip_address(server_id, address, opts={})
         body = { 'unshareIp' => { 'addr' => address } }
-        api(:post, "/servers/#{server_id}/actions/unshare_ip",  opts.merge(:body => body.to_json))
+        api(:delete, "/servers/#{server_id}/ip/public/#{address}",  opts.merge(:body => body.to_json))
       end
 
       # Delete a server.
@@ -645,7 +685,7 @@ module Rightscale
       # Shared IP Groups
       #--------------------------------
 
-      # List shared IP groups.
+      # List shared IP groups. Options: :detail => false|true.
       #
       # RightRackspace caching: yes, keys: '/shared_ip_groups', '/shared_ip_groups/detail'
       #

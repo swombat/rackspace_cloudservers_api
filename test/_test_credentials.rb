@@ -23,8 +23,8 @@ class TestCredentials
 #
 # or you have a file: ~/.rightscale/test_rackspace_credentials.rb with text:
 #
-#  TestCredentials.key = 'your_rackspace_username'
-#  TestCredentials.secret = 'your_rackspace_auth_key'
+#  TestCredentials.username = 'your_rackspace_username'
+#  TestCredentials.auth_key = 'your_rackspace_auth_key'
 #
   def self.get_credentials
     Dir.chdir do

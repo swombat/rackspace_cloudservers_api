@@ -15,7 +15,9 @@ class TestRightRackspace < Test::Unit::TestCase
   def setup
     $stdout.sync = true
     ::TestCredentials.get_credentials
+    # TODO: remove :auth_endpoint and :service_endpoint when the service is released publicly
     @rackspace = Rightscale::Rackspace::Interface.new(TestCredentials.username, TestCredentials.auth_key,
+     :logger => Logger.new('/dev/null'),
      :auth_endpoint    => 'https://api.mosso.com/auth',
      :service_endpoint => 'https://servers.api.rackspacecloud.com/v1.0/413609')
   end
@@ -34,15 +36,16 @@ class TestRightRackspace < Test::Unit::TestCase
   def wail_until(reason, &block)
     print reason
     loop do
-      print '.'
-      sleep 3
+      print '*'
+      sleep 5
       break if block.call
     end
-    sleep 15
+    sleep 10
     puts
   end
 
   def resources_test(name)
+#    puts ">>> Resource test: #{name}"
     resource_type = ''
     name.split('_').each_with_index do |w, i|
       resource_type += (i==0 ? w.downcase : w.capitalize)
@@ -85,6 +88,7 @@ class TestRightRackspace < Test::Unit::TestCase
   end
 
   def right_rackspace_level_caching_test(cache_key, *api_call_data)
+#    puts ">>> Rackspace gem level caching test: #{cache_key}"
     # Assert there are no any exceptions while the caching is off
     @rackspace.send(*api_call_data)
     @rackspace.send(*api_call_data)
@@ -103,6 +107,7 @@ class TestRightRackspace < Test::Unit::TestCase
   end
 
   def rackspace_service_level_caching_test(*api_call_data)
+#    puts ">>> Rackspace service caching test: #{cache_key}"
     assert_raise(Rightscale::Rackspace::NoChange) do
       opts = api_call_data.last.is_a?(Hash) ? api_call_data.pop : {}
       opts[:vars] = { 'changes-since' => Time.now.utc }
@@ -219,7 +224,35 @@ class TestRightRackspace < Test::Unit::TestCase
     assert @rackspace.update_backup_schedule(id)
   end
 
-  def test_045_delete_server
+  def test_045_list_addresses_test
+    id = get_test_server_id
+    # all addresses
+    addresses = nil
+    assert_nothing_raised do
+      addresses = @rackspace.list_addresses(id)
+    end
+    assert  addresses['addresses'].is_a?(Hash)
+    assert  addresses['addresses']['public'].is_a?(Array)
+    assert  addresses['addresses']['private'].is_a?(Array)
+    # public addresses
+    public_addresses = nil
+    assert_nothing_raised do
+      public_addresses = @rackspace.list_addresses(id, :public)
+    end
+    assert  public_addresses.is_a?(Hash)
+    assert  public_addresses['public'].is_a?(Array)
+    assert !public_addresses['public'].blank?
+    # private addresses
+    private_addresses = nil
+    assert_nothing_raised do
+      private_addresses = @rackspace.list_addresses(id, :private)
+    end
+    assert  private_addresses.is_a?(Hash)
+    assert  private_addresses['private'].is_a?(Array)
+    assert !private_addresses['private'].blank?
+  end
+
+  def test_049_delete_server
     assert @rackspace.delete_server(get_test_server_id)
   end
 
