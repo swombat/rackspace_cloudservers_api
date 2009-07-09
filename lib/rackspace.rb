@@ -549,7 +549,7 @@ module Rightscale
       #
       def confirm_resized_server(server_id, opts={})
         body = { 'confirmResize' => nil }
-        api(:put, "/servers/#{server_id}/action", opts.merge(:body => body.to_json))
+        api(:post, "/servers/#{server_id}/action", opts.merge(:body => body.to_json))
       end
 
       # Revert a server resize action.
@@ -558,7 +558,7 @@ module Rightscale
       #
       def revert_resized_server(server_id, opts={})
         body = { 'revertResize' => nil }
-        api(:delete, "/servers/#{server_id}/action", opts.merge(:body => body.to_json))
+        api(:post, "/servers/#{server_id}/action", opts.merge(:body => body.to_json))
       end
 
       #--------------------------------
