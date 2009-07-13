@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2007-2009 RightScale Inc
+# Copyright (c) 2009 RightScale Inc
 #
 # Permission is hereby granted, free of charge, to any person obtaining
 # a copy of this software and associated documentation files (the
@@ -191,10 +191,11 @@ module Rightscale
       #          "value"=>1000,
       #          "resetTime"=>1246604596}, ...]}}
       #
-      # RightRackspace caching: yes, key: '/limits'
       #
       def list_limits(opts={})
-        api_or_cache(:get, "/limits",  opts)
+#     # RightRackspace caching: yes, key: '/limits'
+#        api_or_cache(:get, "/limits",  opts)
+        api(:get, "/limits",  opts)
       end
 
       #--------------------------------
@@ -581,7 +582,7 @@ module Rightscale
       #
       # RightRackspace caching: no
       def list_addresses(server_id, address_type=:all, opts={})
-        path = "/servers/#{server_id}/ip"
+        path = "/servers/#{server_id}/ips"
         case address_type.to_s
         when 'public'  then path += "/public"
         when 'private' then path += "/private"
@@ -614,7 +615,7 @@ module Rightscale
             'configureServer' => configure_server
           }
         }
-        api(:put, "/servers/#{server_id}/ip/public/#{address}",  opts.merge(:body => body.to_json))
+        api(:put, "/servers/#{server_id}/ips/public/#{address}",  opts.merge(:body => body.to_json))
       end
 
       # Remove a shared IP address from the specified server
@@ -623,7 +624,7 @@ module Rightscale
       #
       def unshare_ip_address(server_id, address, opts={})
         body = { 'unshareIp' => { 'addr' => address } }
-        api(:delete, "/servers/#{server_id}/ip/public/#{address}",  opts.merge(:body => body.to_json))
+        api(:delete, "/servers/#{server_id}/ips/public/#{address}",  opts.merge(:body => body.to_json))
       end
 
       # Delete a server.

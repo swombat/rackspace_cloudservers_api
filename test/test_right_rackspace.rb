@@ -135,7 +135,14 @@ class TestRightRackspace < Test::Unit::TestCase
   end
 
   def test_003_limits
-    right_rackspace_level_caching_test('/limits', :list_limits)
+#    right_rackspace_level_caching_test('/limits', :list_limits)
+    limits = nil
+    assert_nothing_raised do
+      limits = @rackspace.list_limits
+    end
+    assert limits.is_a?(Hash)
+    assert limits['limits'].is_a?(Hash)
+    assert limits['limits']['rate'].is_a?(Array)
   end
 
   def test_005_api_version
