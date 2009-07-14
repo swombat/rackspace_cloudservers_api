@@ -316,6 +316,7 @@ module Rightscale
         @service_endpoint_data = endpoint_to_host_data(@service_endpoint)
         @logged_in = true
         on_event(:on_login_success)
+        true
       end
 
       # Incrementally lists something.
