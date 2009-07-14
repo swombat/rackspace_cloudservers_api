@@ -260,8 +260,10 @@ module Rightscale
           result           = @error_handler.check(request_hash)
           @error_handler   = nil
           on_event(:on_login_failure) unless @logged_in
-          on_event(:on_failure)
-          raise Error.new(@last_error) if result.nil?
+          if result.nil?
+            on_event(:on_failure)
+            raise Error.new(@last_error)
+          end
         end
         result
       rescue
