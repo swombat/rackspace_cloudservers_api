@@ -254,12 +254,11 @@ module Rightscale
                        end
                      end
           end
-        else          # ERROR
+        else # ERROR
           on_event(:on_error, HttpErrorHandler::extract_error_description(@last_response, merged_params[:verbose_errors]))
           @error_handler ||= HttpErrorHandler.new(self, :errors_list => self.class.rackspace_problems)
           result           = @error_handler.check(request_hash)
           @error_handler   = nil
-          on_event(:on_login_failure) unless @logged_in
           if result.nil?
             on_event(:on_failure)
             raise Error.new(@last_error)
