@@ -113,3 +113,12 @@ unless defined? ActiveSupport::CoreExtensions
     end
   end
 end
+
+# We also use String#first from 1.8.7 that doesn't exist in 1.8.6
+unless String.instance_methods.include? "first"
+  class String
+    def first
+      self
+    end
+  end
+end
