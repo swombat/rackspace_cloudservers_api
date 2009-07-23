@@ -441,10 +441,11 @@ module Rightscale
           'server' => {
             'name'     => server_data[:name],
             'imageId'  => server_data[:image_id],
-            'flavorId' => server_data[:flavor_id]
+            'flavorId' => server_data[:flavor_id],
           }
         }
         #body['server']['adminPass']   = server_data[:password] if     server_data[:password]
+        body['server']['sharedIpGroupId']   = server_data[:shared_ip_group_id] if server_data[:shared_ip_group_id]
         body['server']['metadata']    = server_data[:metadata] unless server_data[:metadata].blank?
         body['server']['personality'] = personality            unless personality.blank?
         api(:post, "/servers", opts.merge(:body => body.to_json))
