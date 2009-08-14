@@ -35,7 +35,7 @@ module Rightscale
     end
 
     class Interface
-      DEFAULT_AUTH_ENDPOINT = "https://auth.api.rackspacecloud.com"
+      DEFAULT_AUTH_ENDPOINT = "https://auth.api.rackspacecloud.com/v1.0"
       DEFAULT_LIMIT = 1000
 
       @@rackspace_problems = []
@@ -289,8 +289,6 @@ module Rightscale
       # Params:  +soft+ is used for auto-authentication when auth_token expires. Soft auth
       # do not overrides @last_request and @last_response attributes (are needed for a proper
       # error handling) on success.
-      #
-      # TODO: make sure 'x-compute-url' header works when Rackspace release the service publicly
       def authenticate(opts={}) # :nodoc:
         @logged_in    = false
         @auth_headers = {}
@@ -312,7 +310,7 @@ module Rightscale
         @auth_headers = @last_response.to_hash
         @auth_token   = @auth_headers['x-auth-token'].first
         # Service endpoint
-        @service_endpoint      = merged_params[:service_endpoint] || @auth_headers['x-compute-url'].first
+        @service_endpoint      = merged_params[:service_endpoint] || @auth_headers['x-server-management-url'].first
         @service_endpoint_data = endpoint_to_host_data(@service_endpoint)
         @logged_in = true
         on_event(:on_login_success)
