@@ -142,7 +142,7 @@ module Rightscale
       #    :on_response => on_response,
       #    :on_error    => on_error)
       #
-      def initialize(username, auth_key, params={})
+      def initialize(username=nil, auth_key=nil, params={})
         @params = params
         # Auth data
         @username  = username || ENV['RACKSPACE_USERNAME']

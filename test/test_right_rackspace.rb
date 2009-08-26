@@ -17,30 +17,31 @@ class TestRightRackspace < Test::Unit::TestCase
     ::TestCredentials.get_credentials
     # TODO: remove :auth_endpoint and :service_endpoint when the service is released publicly
     @rackspace = Rightscale::Rackspace::Interface.new(TestCredentials.username, TestCredentials.auth_key,
-     :logger => Logger.new('/dev/null'),
-     :auth_endpoint    => 'https://api.mosso.com/auth',
-     :service_endpoint => 'https://servers.api.rackspacecloud.com/v1.0/413609')
+     :logger => Logger.new('/dev/null'))
   end
 
   # -------------
   # Helpers
   # -------------
 
-  def get_test_server_id
-    @rackspace.list_servers['servers'].each do |server|
+  def get_test_server_id(detail=false)
+    @rackspace.list_servers(:detail => detail)['servers'].each do |server|
       return server['id'] if server['name'] == TEST_SERVER_NAME
     end
     nil
   end
 
   def wail_until(reason, &block)
+    initial_time = Time.now
+    puts
     print reason
     loop do
-      print '*'
-      sleep 5
       break if block.call
+      print '*'
+      sleep 10
     end
-    sleep 10
+    puts
+    puts "(waited: #{Time.now - initial_time} seconds)"
     puts
   end
 
@@ -180,12 +181,19 @@ class TestRightRackspace < Test::Unit::TestCase
     id = get_test_server_id
     if id
       assert @rackspace.delete_server(id)
-      puts ">>> The test server is deleted. "
-      sleep 10
+      puts
+      puts "> The old test server is just deleted"
+      wail_until("> Wait until the old test server disappears from list_servers responses: ") do
+        id1 = get_test_server_id
+        id2 = get_test_server_id(true)
+        !id1 && !id2
+      end
     end
   end
 
   def test_042_create_server
+    puts
+    puts "> Launch a new test server "
     server = @rackspace.create_server(
       :name          => TEST_SERVER_NAME,
       :image_id      => TEST_IMAGE_ID,
@@ -193,11 +201,6 @@ class TestRightRackspace < Test::Unit::TestCase
       :metadata      => TEST_METADATA,
       :personalities => TEST_PERSONALITIES
     )
-    # wait a while the server is being built
-    wail_until('>>> ... waiting while the new test server is being built') do
-      @rackspace.get_server(server['server']['id'])['server']['status'] == 'ACTIVE'
-    end
-    #
     assert server.is_a?(Hash)
     assert_equal TEST_SERVER_NAME, server['server']['name']
     assert_equal TEST_METADATA,    server['server']['metadata']
@@ -205,16 +208,34 @@ class TestRightRackspace < Test::Unit::TestCase
     assert_equal TEST_FLAVOR_ID,   server['server']['flavorId']
   end
 
-  def test_043_update_server_password
+  # KD: 2009-08-26: That guys are having problems with caching
+  # Makesure the server appears in both list servers calls
+  def test_044_wait_for_the_server_active_state
+    wail_until("> Wait until the new test server appears in list_servers responses:") do
+      id1 = get_test_server_id
+      id2 = get_test_server_id(true)
+      id1 && id2
+    end
+  end
+
+  def test_045_wait_for_the_server_active_state
     id = get_test_server_id
-    assert @rackspace.update_server(id, :password => '1234567890')
-    # wait as bit while the password is being changed
-    wail_until('>>> ... waiting while the password is being updated') do
+    # wait a while the server is being built
+    wail_until('> Wait while the new test server is being built') do
       @rackspace.get_server(id)['server']['status'] == 'ACTIVE'
     end
   end
 
-  def test_044_backup_schedule
+  def test_050_update_server_password
+    id = get_test_server_id
+    assert @rackspace.update_server(id, :password => '1234567890')
+    # wait as bit while the password is being changed
+    wail_until('> Wait while the password is being updated') do
+      @rackspace.get_server(id)['server']['status'] == 'ACTIVE'
+    end
+  end
+
+  def test_052_backup_schedule
     id = get_test_server_id
     # get a schedule
     schedule = nil
@@ -231,7 +252,7 @@ class TestRightRackspace < Test::Unit::TestCase
     assert @rackspace.update_backup_schedule(id)
   end
 
-  def test_045_list_addresses_test
+  def test_054_list_addresses_test
     id = get_test_server_id
     # all addresses
     addresses = nil
@@ -259,8 +280,22 @@ class TestRightRackspace < Test::Unit::TestCase
     assert !private_addresses['private'].blank?
   end
 
-  def test_049_delete_server
-    assert @rackspace.delete_server(get_test_server_id)
+  def test_060_delete_server
+    puts
+    puts "> Delete the test server "
+    assert_nothing_raised do
+      @rackspace.delete_server(get_test_server_id)
+    end
+  end
+
+  # KD: 2009-08-26:
+  # Makesure the server disappeared from both list servers calls
+  def test_061_wait_for_the_server_active_state
+    wail_until("> Wait until the test server disappears from list_servers responses:") do
+      id1 = get_test_server_id
+      id2 = get_test_server_id(true)
+      !id1 && !id2
+    end
   end
 
 end
