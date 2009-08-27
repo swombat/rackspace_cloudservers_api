@@ -24,6 +24,9 @@
 module Rightscale
   module Rackspace
 
+    # TODO: KD: Enable this feature when Packspace get rid of the caching issue
+    PAGINATION_ENABLED = false
+
     # == Rightscale::Rackspace::Interface 
     #
     # === Examples:
@@ -240,7 +243,7 @@ module Rightscale
       # RightRackspace caching: yes, keys: '/images', '/images/detail'
       #
       def list_images(opts={})
-        api_or_cache(:get, detailed_path("/images", opts), opts.merge(:incrementally => true))
+        api_or_cache(:get, detailed_path("/images", opts), opts.merge(:incrementally => PAGINATION_ENABLED))
       end
 
       # Incrementally list images.
@@ -349,7 +352,7 @@ module Rightscale
       # RightRackspace caching: yes, keys: '/flavors', '/flavors/detail'
       #
       def list_flavors(opts={})
-        api_or_cache(:get, detailed_path("/flavors", opts), opts.merge(:incrementally => true))
+        api_or_cache(:get, detailed_path("/flavors", opts), opts.merge(:incrementally => PAGINATION_ENABLED))
       end
 
       # Incrementally list flavors.
@@ -395,7 +398,7 @@ module Rightscale
       #        "status"=>"ACTIVE"}]
       #
       def list_servers(opts={})
-        api_or_cache(:get, detailed_path("/servers", opts), opts.merge(:incrementally => true))
+        api_or_cache(:get, detailed_path("/servers", opts), opts.merge(:incrementally => PAGINATION_ENABLED))
       end
 
       # Incrementally list servers.
@@ -588,7 +591,7 @@ module Rightscale
         when 'public'  then path += "/public"
         when 'private' then path += "/private"
         end
-        api(:get, path, opts.merge(:incrementally => true))
+        api(:get, path, opts.merge(:incrementally => PAGINATION_ENABLED))
       end
 
       # Share an IP from an existing server in the specified shared IP group to another
@@ -692,7 +695,7 @@ module Rightscale
       # RightRackspace caching: yes, keys: '/shared_ip_groups', '/shared_ip_groups/detail'
       #
       def list_shared_ip_groups(opts={})
-        api_or_cache(:get, detailed_path("/shared_ip_groups", opts), opts.merge(:incrementally => true))
+        api_or_cache(:get, detailed_path("/shared_ip_groups", opts), opts.merge(:incrementally => PAGINATION_ENABLED))
       end
 
       # Incrementally list IP groups.

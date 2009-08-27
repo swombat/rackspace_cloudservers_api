@@ -204,6 +204,7 @@ module Rightscale
           request[key] = value.to_s
         end
         request['content-type'] ||= 'application/json'
+        request['accept'] = 'application/json'
         # prepare output hash
         endpoint_data.merge(:request => request)
       end
