@@ -256,7 +256,8 @@ module Rightscale
                      end
           end
         else # ERROR
-          on_event(:on_error, HttpErrorHandler::extract_error_description(@last_response, merged_params[:verbose_errors]))
+          @last_error = HttpErrorHandler::extract_error_description(@last_response, merged_params[:verbose_errors])
+          on_event(:on_error, @last_error)
           @error_handler ||= HttpErrorHandler.new(self, :errors_list => self.class.rackspace_problems)
           result           = @error_handler.check(request_hash)
           @error_handler   = nil
@@ -301,11 +302,11 @@ module Rightscale
         internal_request_info(request_data)
         unless @last_response.is_a?(Net::HTTPSuccess)
           @error_handler = nil
-          error_message = HttpErrorHandler::extract_error_description(@last_response, merged_params[:verbose_errors])
-          on_event(:on_error, error_message)
+          @last_error = HttpErrorHandler::extract_error_description(@last_response, merged_params[:verbose_errors])
+          on_event(:on_error, @last_error)
           on_event(:on_login_failure)
           on_event(:on_failure)
-          raise Error.new(error_message)
+          raise Error.new(@last_error)
         end
         # Store all auth response headers
         @auth_headers = @last_response.to_hash
@@ -473,15 +474,13 @@ module Rightscale
         result      = nil
         error_found = false
         response    = @handle.last_response
-        error_message = HttpErrorHandler::extract_error_description(response, @handle.merged_params[:verbose_errors])
+        error_message = @handle.last_error
         # Log the error
         logger = @handle.logger
         unless SKIP_LOGGING_ON.include?(response.code)
           logger.warn("##### #{@handle.class.name} returned an error: #{error_message} #####")
           logger.warn("##### #{@handle.class.name} request: #{request_hash[:server]}:#{request_hash[:port]}#{request_hash[:request].path} ####")
         end
-        # Get the error description of it is provided
-        @handle.last_error = error_message
         # now - check the error
         @errors_list.each do |error_to_find|
           if error_message[/#{error_to_find}/i]
