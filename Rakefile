@@ -41,3 +41,18 @@ end
 ##end
  
 # vim: syntax=Ruby
+
+
+begin
+  require 'jeweler'
+  Jeweler::Tasks.new do |gemspec|
+    gemspec.name = "rackspace_cloudservers_api"
+    gemspec.summary = "CloudServers Api based on RightScale's gem"
+    gemspec.description = "CloudServers Api based on RightScale's gem"
+    gemspec.email = "daniel.gemcutter@tenner.org"
+    gemspec.homepage = "http://github.com/swombat/rackspace_cloudservers_api"
+    gemspec.authors = ["Daniel Tenner", "Rightscale"]
+  end
+rescue LoadError
+  puts "Jeweler not available. Install it with: gem install jeweler"
+end
