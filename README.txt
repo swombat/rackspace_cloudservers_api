@@ -1,3 +1,9 @@
+== Rackspace CloudServers API gem
+
+Currently this is just a fork of the rightscale gem so that I can make any required customisations myself. I haven't been able to run the tests yet, so don't use it yet!
+
+- Daniel
+
 = RightScale Rackspace Ruby Gems
 
 Published by RightScale, Inc. under the MIT License.
